@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Simple WebRTC DTMF Test</title>
+  <style>
+    .dialpad { display: grid; grid-template-columns: repeat(3, 60px); gap: 10px; margin-top: 20px; }
+    .dialpad button { padding: 15px; font-size: 18px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h2>WebRTC DTMF Test</h2>
+
+  <button onclick="start()">Start Microphone</button>
+  <button onclick="createOffer()">Create Offer</button>
+  <button onclick="setRemoteAndCreateAnswer()">Set Remote Offer + Create Answer</button>
+  <button onclick="setRemoteAnswer()">Set Remote Answer</button>
+  <button onclick="muteMic()">Mute</button>
+  <button onclick="unmuteMic()">Unmute</button>
+
+  <h3>Local SDP</h3>
+  <textarea id="localSdp" cols="80" rows="10"></textarea>
+
+  <h3>Remote SDP</h3>
+  <textarea id="remoteSdp" cols="80" rows="10"></textarea>
+
+  <h3>DTMF Dial Pad</h3>
+  <div class="dialpad">
+    <button onclick="sendDTMF('1')">1</button>
+    <button onclick="sendDTMF('2')">2</button>
+    <button onclick="sendDTMF('3')">3</button>
+    <button onclick="sendDTMF('4')">4</button>
+    <button onclick="sendDTMF('5')">5</button>
+    <button onclick="sendDTMF('6')">6</button>
+    <button onclick="sendDTMF('7')">7</button>
+    <button onclick="sendDTMF('8')">8</button>
+    <button onclick="sendDTMF('9')">9</button>
+    <button onclick="sendDTMF('*')">*</button>
+    <button onclick="sendDTMF('0')">0</button>
+    <button onclick="sendDTMF('#')">#</button>
+  </div>
+
+  <p id="status" style="color: green;"></p>
+
+  <script>
+    let pc, localStream, dataChannel;
+
+    async function start() {
+      localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      document.getElementById('status').textContent = "Microphone started";
+    }
+
+    async function createPeerConnection(isOfferer = false) {
+      pc = new RTCPeerConnection();
+
+      pc.onicecandidate = e => {
+        if (e.candidate === null) {
+          document.getElementById('localSdp').value = JSON.stringify(pc.localDescription);
+        }
+      };
+
+      pc.ontrack = e => {
+        const audio = new Audio();
+        audio.srcObject = e.streams[0];
+        audio.autoplay = true;
+        document.getElementById('status').textContent = "Receiving remote audio";
+      };
+
+      if (isOfferer) {
+        dataChannel = pc.createDataChannel('dtmfChannel');
+        setupDataChannel();
+      } else {
+        pc.ondatachannel = event => {
+          dataChannel = event.channel;
+          setupDataChannel();
+        };
+      }
+
+      if (localStream) {
+        localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+      }
+    }
+
+    function setupDataChannel() {
+      dataChannel.onopen = () => console.log("DataChannel open");
+      dataChannel.onmessage = event => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'dtmf') {
+            console.log("Remote DTMF pressed:", data.key);
+          }
+        } catch {}
+      };
+    }
+
+    async function createOffer() {
+      await createPeerConnection(true);
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      document.getElementById('status').textContent = "Offer created";
+    }
+
+    async function setRemoteAndCreateAnswer() {
+      const remoteSdp = JSON.parse(document.getElementById('remoteSdp').value);
+      await createPeerConnection(false);
+      await pc.setRemoteDescription(new RTCSessionDescription(remoteSdp));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      document.getElementById('status').textContent = "Answer created";
+    }
+
+    async function setRemoteAnswer() {
+      const remoteSdp = JSON.parse(document.getElementById('remoteSdp').value);
+      await pc.setRemoteDescription(new RTCSessionDescription(remoteSdp));
+      document.getElementById('status').textContent = "Remote answer set";
+    }
+
+    function sendDTMF(key) {
+      const sender = pc.getSenders().find(s => s.track && s.track.kind === 'audio');
+      if (sender && sender.dtmf) sender.dtmf.insertDTMF(key, 200);
+
+      if (dataChannel && dataChannel.readyState === 'open') {
+        dataChannel.send(JSON.stringify({ type: 'dtmf', key }));
+      }
+      console.log("You pressed:", key);
+    }
+
+    function muteMic() {
+      if (!localStream) return;
+      localStream.getAudioTracks()[0].enabled = false;
+      document.getElementById('status').textContent = "Microphone Muted";
+    }
+
+    function unmuteMic() {
+      if (!localStream) return;
+      localStream.getAudioTracks()[0].enabled = true;
+      document.getElementById('status').textContent = "Microphone Unmuted";
+    }
+  </script>
+</body>
+</html>
